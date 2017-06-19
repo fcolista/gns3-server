@@ -77,7 +77,7 @@ class Computer(EmbedShell):
                                     type=ethernet.ETH_TYPE_IP) + \
             ip.IP(p=ip.IP_PROTO_ICMP,
                   src_s=self.ip_address,
-                  dst_s="192.168.1.1") + \
+                  dst_s=packet[ip.IP].src_s) + \
             icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
             icmp.ICMP.Echo(id=icmp_layer.id, seq=icmp_layer.seq)
         return icmpreq

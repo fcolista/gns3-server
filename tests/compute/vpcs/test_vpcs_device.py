@@ -18,18 +18,24 @@
 import pytest
 from unittest.mock import MagicMock
 from pypacker.layer12 import arp, ethernet
+from pypacker.layer3 import ip, icmp
 
 from gns3server.compute.vpcs.vpcs_device import Computer
 
 
 @pytest.fixture
-def computer():
+def src_addr():
+    return MagicMock()
+
+
+@pytest.fixture
+def computer(src_addr):
     computer = Computer()
     computer.transport = MagicMock()
     computer.mac_address = "12:34:56:78:90:12"
     computer.ip_address = "192.168.1.2"
 
-    def assert_sendto(response, addr):
+    def assert_sendto(response):
         """
         Wrapper to check if sendto is called with the correct
         parameters and display proper debug informations.
@@ -40,7 +46,7 @@ def computer():
             if args[0] == response.bin() and args[1] == src_addr:
                 return
         # No match display debug informations
-        assert args[1] == addr
+        assert args[1] == src_addr
         packet = ethernet.Ethernet(args[0])
         for layer in response:
             assert str(packet[type(layer)]) == str(layer)
@@ -50,16 +56,11 @@ def computer():
     return computer
 
 
-@pytest.fixture
-def src_addr():
-    return MagicMock()
-
-
 def test_computer_arp_received(computer, src_addr):
     arpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
                                type=ethernet.ETH_TYPE_ARP) + \
         arp.ARP(sha_s="12:34:56:78:90:13",
-                spa_s="192.168.0.1",
+                spa_s="192.168.1.1",
                 tha_s="FF:FF:FF:FF:FF:FF",
                 tpa_s="0.0.0.0")
     computer.datagram_received(arpreq.bin(), src_addr)
@@ -74,7 +75,7 @@ def test_computer_arp_received(computer, src_addr):
             tha=arpreq[arp.ARP].sha,
             tpa=arpreq[arp.ARP].spa)
 
-    computer.assert_sendto(response, src_addr)
+    computer.assert_sendto(response)
 
 
 def test_computer_arp_received_not_for_me(computer, src_addr):
@@ -86,3 +87,17 @@ def test_computer_arp_received_not_for_me(computer, src_addr):
                 tpa_s=computer.ip_address)
     computer.datagram_received(arpreq.bin(), src_addr)
     assert not computer.transport.sendto.called
+
+
+def test_icmp_echo(computer, src_addr):
+    icmpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
+                                dst_s=computer.mac_address,
+                                type=ethernet.ETH_TYPE_IP) + \
+        ip.IP(p=ip.IP_PROTO_ICMP,
+              src_s="192.168.1.1",
+              dst_s=computer.ip_address) + \
+        icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+        icmp.ICMP.Echo(id=54, seq=12)
+    computer.datagram_received(icmpreq.bin(), src_addr)
+    icmpreq.reverse_all_address()
+    computer.assert_sendto(icmpreq)
