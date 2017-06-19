@@ -76,6 +76,7 @@ def test_computer_arp_received(computer, src_addr):
             tpa=arpreq[arp.ARP].spa)
 
     computer.assert_sendto(response)
+    assert computer._arp_cache["192.168.1.1"] == "12:34:56:78:90:13"
 
 
 def test_computer_arp_received_not_for_me(computer, src_addr):

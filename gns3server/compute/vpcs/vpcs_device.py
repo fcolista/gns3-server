@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import time
 import asyncio
 from pypacker.layer12 import arp, ethernet
 from pypacker.layer3 import icmp, ip
@@ -25,10 +26,16 @@ from gns3server.utils.asyncio.embed_shell import EmbedShell, create_stdin_shell
 
 class Computer(EmbedShell):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, dst=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.ip_address = None
         self.mac_address = None
+        self.dst_addr = dst
+        self._arp_cache = {}
+
+        # ICMP reply are stored to be consume by the ping command
+        self._icmp_queue = asyncio.Queue()
+
         # Order is important if a layer return
         # false we stop the processing
         self._layer_handlers = [
@@ -43,10 +50,41 @@ class Computer(EmbedShell):
 
         Usage: ping hostname or ip
         """
-        return 'Ping / Pong'
+        msg = ""
+        seq = 1
+        dst = yield from self._resolve(host)
+        while seq <= 5:
+            icmpreq = ethernet.Ethernet(src_s=self.mac_address,
+                                        dst_s=dst,
+                                        type=ethernet.ETH_TYPE_IP) + \
+                ip.IP(p=ip.IP_PROTO_ICMP,
+                      src_s=self.ip_address,
+                      dst_s=host) + \
+                icmp.ICMP(type=icmp.ICMP_ECHO) + \
+                icmp.ICMP.Echo(id=1, seq=seq, ts=int(time.time()), body_bytes=b"x" * 64)
+            self.transport.sendto(icmpreq.bin(), self.dst_addr)
+            reply = yield from self._icmp_queue.get()
+            ip_packet = reply[ip.IP]
+            icmp_packet = reply[icmp.ICMP.Echo]
+            msg += "{} bytes from {} icmp_seq={} time={} ms\n".format(
+                len(icmp_packet.body_bytes),
+                ip_packet.src_s,
+                icmp_packet.seq,
+                round(time.time() - icmp_packet.ts, 3)
+            )
+            seq += 1
+        return msg
+
+    @asyncio.coroutine
+    def _resolve(self, host):
+        #TODO: Support DNS
+        return self._arp_cache[host]
 
     def connection_made(self, transport):
         self.transport = transport
+
+    def connection_lost(self, exc):
+        self.transport = None
 
     def datagram_received(self, data, src_addr):
         packet = ethernet.Ethernet(data)
@@ -59,6 +97,8 @@ class Computer(EmbedShell):
                     self.transport.sendto(reply.bin(), src_addr)
 
     def _handle_arp(self, arp_layer, packet):
+        print(self._arp_cache)
+        self._arp_cache[arp_layer.spa_s] = arp_layer.sha_s
         if arp_layer.tha_s != self.mac_address and arp_layer.tha_s != "FF:FF:FF:FF:FF:FF":
             return False
         if arp_layer.op == arp.ARP_OP_REQUEST:
@@ -72,6 +112,11 @@ class Computer(EmbedShell):
             return arpreq
 
     def _handle_icmp_echo(self, icmp_layer, packet):
+        print('PING')
+        if icmp_layer.id == 1:
+            asyncio.async(self._icmp_queue.put(packet))
+            return False
+
         icmpreq = ethernet.Ethernet(src_s=self.mac_address,
                                     dst=packet.src,
                                     type=ethernet.ETH_TYPE_IP) + \
@@ -92,7 +137,7 @@ class VpcsDevice:
     def run(self, loop=None):
         if loop is None:
             loop = asyncio.get_event_loop()
-        shell = Computer()
+        shell = Computer(dst=("127.0.0.1", 5555))
         shell.mac_address = "12:34:56:78:90:13"
         shell.ip_address = "192.168.1.2"
         shell.prompt = "VPCS> "
