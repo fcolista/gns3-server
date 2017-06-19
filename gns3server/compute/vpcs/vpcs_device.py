@@ -16,6 +16,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import time
+import random
 import asyncio
 from pypacker.layer12 import arp, ethernet
 from pypacker.layer3 import icmp, ip
@@ -35,6 +36,8 @@ class Computer(EmbedShell):
 
         # ICMP reply are stored to be consume by the ping command
         self._icmp_queue = asyncio.Queue()
+        # List of ICMP identifiers use by us
+        self._icmp_sent_ids = set()
 
         # Order is important if a layer return
         # false we stop the processing
@@ -53,23 +56,27 @@ class Computer(EmbedShell):
         msg = ""
         seq = 1
         dst = yield from self._resolve(host)
+        self._icmp_sent_ids = set()
         while seq <= 5:
+            id = random.getrandbits(16)
+            self._icmp_sent_ids.add(id)
             icmpreq = ethernet.Ethernet(src_s=self.mac_address,
                                         dst_s=dst,
                                         type=ethernet.ETH_TYPE_IP) + \
                 ip.IP(p=ip.IP_PROTO_ICMP,
                       src_s=self.ip_address,
                       dst_s=host) + \
-                icmp.ICMP(type=icmp.ICMP_ECHO) + \
-                icmp.ICMP.Echo(id=1, seq=seq, ts=int(time.time()), body_bytes=b"x" * 64)
+                icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+                icmp.ICMP.Echo(id=id, seq=seq, ts=int(time.time()), body_bytes=b"x" * 64)
             self.transport.sendto(icmpreq.bin(), self.dst_addr)
             reply = yield from self._icmp_queue.get()
             ip_packet = reply[ip.IP]
             icmp_packet = reply[icmp.ICMP.Echo]
-            msg += "{} bytes from {} icmp_seq={} time={} ms\n".format(
+            msg += "{} bytes from {} icmp_seq={} ttl={} time={} ms\n".format(
                 len(icmp_packet.body_bytes),
                 ip_packet.src_s,
                 icmp_packet.seq,
+                ip_packet.ttl,
                 round(time.time() - icmp_packet.ts, 3)
             )
             seq += 1
@@ -97,7 +104,6 @@ class Computer(EmbedShell):
                     self.transport.sendto(reply.bin(), src_addr)
 
     def _handle_arp(self, arp_layer, packet):
-        print(self._arp_cache)
         self._arp_cache[arp_layer.spa_s] = arp_layer.sha_s
         if arp_layer.tha_s != self.mac_address and arp_layer.tha_s != "FF:FF:FF:FF:FF:FF":
             return False
@@ -112,8 +118,8 @@ class Computer(EmbedShell):
             return arpreq
 
     def _handle_icmp_echo(self, icmp_layer, packet):
-        print('PING')
-        if icmp_layer.id == 1:
+        if icmp_layer.id in self._icmp_sent_ids:
+            self._icmp_sent_ids.remove(icmp_layer.id)
             asyncio.async(self._icmp_queue.put(packet))
             return False
 
@@ -123,7 +129,7 @@ class Computer(EmbedShell):
             ip.IP(p=ip.IP_PROTO_ICMP,
                   src_s=self.ip_address,
                   dst_s=packet[ip.IP].src_s) + \
-            icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+            icmp.ICMP(type=0) + \
             icmp.ICMP.Echo(id=icmp_layer.id, seq=icmp_layer.seq)
         return icmpreq
 
