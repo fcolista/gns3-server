@@ -16,21 +16,21 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import pytest
+import asyncio
 from unittest.mock import MagicMock
 from pypacker.layer12 import arp, ethernet
 from pypacker.layer3 import ip, icmp
 
 from gns3server.compute.vpcs.vpcs_device import Computer
 
-
 @pytest.fixture
 def src_addr():
     return MagicMock()
 
 
-@pytest.fixture
-def computer(src_addr):
-    computer = Computer()
+@pytest.fixture(scope="function")
+def computer(src_addr, loop):
+    computer = Computer(loop=loop)
     computer.transport = MagicMock()
     computer.mac_address = "12:34:56:78:90:12"
     computer.ip_address = "192.168.1.2"
@@ -66,10 +66,10 @@ def test_computer_arp_received(computer, src_addr):
     computer.datagram_received(arpreq.bin(), src_addr)
 
     response = ethernet.Ethernet(
-        src_s=computer.mac_address,
+        src_s = computer.mac_address,
         type=ethernet.ETH_TYPE_ARP) + \
         arp.ARP(
-            op=arp.ARP_OP_REPLY,
+            op = arp.ARP_OP_REPLY,
             sha_s=computer.mac_address,
             spa_s=computer.ip_address,
             tha=arpreq[arp.ARP].sha,
@@ -90,15 +90,51 @@ def test_computer_arp_received_not_for_me(computer, src_addr):
     assert not computer.transport.sendto.called
 
 
-def test_icmp_echo(computer, src_addr):
+def test_icmp_echo_reply(computer, src_addr):
     icmpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
                                 dst_s=computer.mac_address,
                                 type=ethernet.ETH_TYPE_IP) + \
-        ip.IP(p=ip.IP_PROTO_ICMP,
-              src_s="192.168.1.1",
-              dst_s=computer.ip_address) + \
-        icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
-        icmp.ICMP.Echo(id=54, seq=12)
+            ip.IP(p=ip.IP_PROTO_ICMP,
+                    src_s="192.168.1.1",
+                    dst_s=computer.ip_address) + \
+            icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+            icmp.ICMP.Echo(id=54, seq=12)
     computer.datagram_received(icmpreq.bin(), src_addr)
     icmpreq.reverse_all_address()
     computer.assert_sendto(icmpreq)
+
+
+def test_icmp_echo_reply_to_our_ping(computer, src_addr):
+    """
+    If the packet is sent by us do not reply
+    """
+    computer._icmp_sent_ids.add(54)
+    icmpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
+                                dst_s=computer.mac_address,
+                                type=ethernet.ETH_TYPE_IP) + \
+            ip.IP(p=ip.IP_PROTO_ICMP,
+                    src_s="192.168.1.1",
+                    dst_s=computer.ip_address) + \
+            icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+            icmp.ICMP.Echo(id=54, seq=12)
+    computer.datagram_received(icmpreq.bin(), src_addr)
+    assert computer.transport.sendto.called is False
+    assert len(computer._icmp_sent_ids) == 0
+
+
+def test_ping(computer, async_run):
+    @asyncio.coroutine
+    def get_icmp_packet():
+        packet, addr = computer.transport.sendto.call_args[0]
+        packet = ethernet.Ethernet(packet)
+        packet.reverse_all_address()
+        assert packet[icmp.ICMP.Echo].id in computer._icmp_sent_ids
+        return packet
+
+    computer._icmp_queue.get = get_icmp_packet
+    computer._arp_cache["192.168.1.1"] = "12:34:56:78:90:13"
+    res = async_run(computer.ping("192.168.1.1"))
+    assert len(res.strip().split("\n")) == 5
+    assert "ttl=64" in res
+    assert "64 bytes" in res
+    assert " from 192.168.1.1 " in res

@@ -26,7 +26,6 @@ from gns3server.utils.asyncio.embed_shell import EmbedShell, create_stdin_shell
 
 
 class Computer(EmbedShell):
-
     def __init__(self, *args, dst=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.ip_address = None
@@ -35,7 +34,7 @@ class Computer(EmbedShell):
         self._arp_cache = {}
 
         # ICMP reply are stored to be consume by the ping command
-        self._icmp_queue = asyncio.Queue()
+        self._icmp_queue = asyncio.Queue(loop=self._loop)
         # List of ICMP identifiers use by us
         self._icmp_sent_ids = set()
 
@@ -64,8 +63,8 @@ class Computer(EmbedShell):
                                         dst_s=dst,
                                         type=ethernet.ETH_TYPE_IP) + \
                 ip.IP(p=ip.IP_PROTO_ICMP,
-                      src_s=self.ip_address,
-                      dst_s=host) + \
+                        src_s=self.ip_address,
+                        dst_s=host) + \
                 icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
                 icmp.ICMP.Echo(id=id, seq=seq, ts=int(time.time()), body_bytes=b"x" * 64)
             self.transport.sendto(icmpreq.bin(), self.dst_addr)
@@ -127,8 +126,8 @@ class Computer(EmbedShell):
                                     dst=packet.src,
                                     type=ethernet.ETH_TYPE_IP) + \
             ip.IP(p=ip.IP_PROTO_ICMP,
-                  src_s=self.ip_address,
-                  dst_s=packet[ip.IP].src_s) + \
+                    src_s=self.ip_address,
+                    dst_s=packet[ip.IP].src_s) + \
             icmp.ICMP(type=0) + \
             icmp.ICMP.Echo(id=icmp_layer.id, seq=icmp_layer.seq)
         return icmpreq
