@@ -29,6 +29,12 @@ class Computer(EmbedShell):
         super().__init__(*args, **kwargs)
         self.ip_address = None
         self.mac_address = None
+        # Order is important if a layer return
+        # false we stop the processing
+        self._layer_handlers = [
+            (arp.ARP, self._handle_arp),
+            (icmp.ICMP.Echo, self._handle_icmp_echo)
+        ]
 
     @asyncio.coroutine
     def ping(self, host):
@@ -42,35 +48,39 @@ class Computer(EmbedShell):
     def connection_made(self, transport):
         self.transport = transport
 
-    def datagram_received(self, data, addr):
-        print('Data received:', addr)
+    def datagram_received(self, data, src_addr):
         packet = ethernet.Ethernet(data)
-        if packet[arp.ARP]:
-            arp_layer = packet[arp.ARP]
-            print(arp_layer.tha_s)
-            if arp_layer.tha_s != self.mac_address and arp_layer.tha_s != "FF:FF:FF:FF:FF:FF":
-                return
-            if arp_layer.op == arp.ARP_OP_REQUEST:
-                arpreq = ethernet.Ethernet(src_s=self.mac_address,
-                                           type=ethernet.ETH_TYPE_ARP) + \
-                    arp.ARP(op=arp.ARP_OP_REPLY,
-                            sha_s=self.mac_address,
-                            spa_s=self.ip_address,
-                            tha=arp_layer.sha,
-                            tpa=arp_layer.spa)
-                print('REPLY', arp_layer.tha_s)
-                self.transport.sendto(arpreq.bin(), addr)
-        if packet[icmp.ICMP.Echo]:
-            icmp_layer = packet[icmp.ICMP.Echo]
-            icmpreq = ethernet.Ethernet(src_s=self.mac_address,
-                                        dst=packet.src,
-                                        type=ethernet.ETH_TYPE_IP) + \
-                ip.IP(p=ip.IP_PROTO_ICMP,
-                      src_s=self.ip_address,
-                      dst_s="192.168.1.1") + \
-                icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
-                icmp.ICMP.Echo(id=icmp_layer.id, seq=icmp_layer.seq)
-            #self.transport.sendto(icmpreq.bin(), addr)
+        for procotol, layer_handler in self._layer_handlers:
+            if packet[procotol]:
+                reply = layer_handler(packet[procotol], packet)
+                if reply is False:
+                    return
+                elif reply is not None:
+                    self.transport.sendto(reply.bin(), src_addr)
+
+    def _handle_arp(self, arp_layer, packet):
+        if arp_layer.tha_s != self.mac_address and arp_layer.tha_s != "FF:FF:FF:FF:FF:FF":
+            return False
+        if arp_layer.op == arp.ARP_OP_REQUEST:
+            arpreq = ethernet.Ethernet(src_s=self.mac_address,
+                                       type=ethernet.ETH_TYPE_ARP) + \
+                arp.ARP(op=arp.ARP_OP_REPLY,
+                        sha_s=self.mac_address,
+                        spa_s=self.ip_address,
+                        tha=arp_layer.sha,
+                        tpa=arp_layer.spa)
+            return arpreq
+
+    def _handle_icmp_echo(self, icmp_layer, packet):
+        icmpreq = ethernet.Ethernet(src_s=self.mac_address,
+                                    dst=packet.src,
+                                    type=ethernet.ETH_TYPE_IP) + \
+            ip.IP(p=ip.IP_PROTO_ICMP,
+                  src_s=self.ip_address,
+                  dst_s="192.168.1.1") + \
+            icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+            icmp.ICMP.Echo(id=icmp_layer.id, seq=icmp_layer.seq)
+        return icmpreq
 
 
 class VpcsDevice:
