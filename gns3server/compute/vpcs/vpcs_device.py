@@ -25,6 +25,11 @@ from gns3server.utils.asyncio.embed_shell import EmbedShell, create_stdin_shell
 
 class Computer(EmbedShell):
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ip_address = None
+        self.mac_address = None
+
     @asyncio.coroutine
     def ping(self, host):
         """
@@ -35,27 +40,37 @@ class Computer(EmbedShell):
         return 'Ping / Pong'
 
     def connection_made(self, transport):
-        print('CONNECTION made')
         self.transport = transport
 
     def datagram_received(self, data, addr):
         print('Data received:', addr)
         packet = ethernet.Ethernet(data)
         if packet[arp.ARP]:
-            print('ARP')
             arp_layer = packet[arp.ARP]
+            print(arp_layer.tha_s)
+            if arp_layer.tha_s != self.mac_address and arp_layer.tha_s != "FF:FF:FF:FF:FF:FF":
+                return
             if arp_layer.op == arp.ARP_OP_REQUEST:
-                arpreq = ethernet.Ethernet(src_s="12:34:56:78:90:12", type=ethernet.ETH_TYPE_ARP) + \
-                    arp.ARP(sha_s="12:34:56:78:90:12", spa_s="192.168.1.2", tha=arp_layer.sha, tpa=arp_layer.spa)
+                arpreq = ethernet.Ethernet(src_s=self.mac_address,
+                                           type=ethernet.ETH_TYPE_ARP) + \
+                    arp.ARP(op=arp.ARP_OP_REPLY,
+                            sha_s=self.mac_address,
+                            spa_s=self.ip_address,
+                            tha=arp_layer.sha,
+                            tpa=arp_layer.spa)
+                print('REPLY', arp_layer.tha_s)
                 self.transport.sendto(arpreq.bin(), addr)
         if packet[icmp.ICMP.Echo]:
-            print('ICMP')  # TODO: reply if it's only for me
             icmp_layer = packet[icmp.ICMP.Echo]
-            icmpreq = ethernet.Ethernet(src_s="12:34:56:78:90:12", dst=packet.src, type=ethernet.ETH_TYPE_IP) + \
-                ip.IP(p=ip.IP_PROTO_ICMP, src_s="192.168.1.2", dst_s="192.168.1.1") + \
+            icmpreq = ethernet.Ethernet(src_s=self.mac_address,
+                                        dst=packet.src,
+                                        type=ethernet.ETH_TYPE_IP) + \
+                ip.IP(p=ip.IP_PROTO_ICMP,
+                      src_s=self.ip_address,
+                      dst_s="192.168.1.1") + \
                 icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
                 icmp.ICMP.Echo(id=icmp_layer.id, seq=icmp_layer.seq)
-            self.transport.sendto(icmpreq.bin(), addr)
+            #self.transport.sendto(icmpreq.bin(), addr)
 
 
 class VpcsDevice:
@@ -68,6 +83,8 @@ class VpcsDevice:
         if loop is None:
             loop = asyncio.get_event_loop()
         shell = Computer()
+        shell.mac_address = "12:34:56:78:90:13"
+        shell.ip_address = "192.168.1.2"
         shell.prompt = "VPCS> "
         self._shell_task = create_stdin_shell(shell)
         self._computer_task = asyncio.Task(loop.create_datagram_endpoint(lambda: shell, local_addr=('127.0.0.1', 5555)))

@@ -26,6 +26,8 @@ from gns3server.compute.vpcs.vpcs_device import Computer
 def computer():
     computer = Computer()
     computer.transport = MagicMock()
+    computer.mac_address = "12:34:56:78:90:12"
+    computer.ip_address = "192.168.1.2"
 
     def assert_sendto(response, addr):
         """
@@ -54,20 +56,33 @@ def src_addr():
 
 
 def test_computer_arp_received(computer, src_addr):
-    arpreq = ethernet.Ethernet(src_s="12:34:56:78:90:12",
+    arpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
                                type=ethernet.ETH_TYPE_ARP) + \
-        arp.ARP(sha_s="12:34:56:78:90:12",
-                spa_s="192.168.0.2",
-                tha_s="12:34:56:78:90:13",
-                tpa_s="192.168.0.1")
+        arp.ARP(sha_s="12:34:56:78:90:13",
+                spa_s="192.168.0.1",
+                tha_s="FF:FF:FF:FF:FF:FF",
+                tpa_s="0.0.0.0")
     computer.datagram_received(arpreq.bin(), src_addr)
 
     response = ethernet.Ethernet(
-        src_s="12:34:56:78:90:12",
+        src_s=computer.mac_address,
         type=ethernet.ETH_TYPE_ARP) + \
-        arp.ARP(sha_s="12:34:56:78:90:12",
-                spa_s="192.168.1.2",
-                tha=arpreq[arp.ARP].sha,
-                tpa=arpreq[arp.ARP].spa)
+        arp.ARP(
+            op=arp.ARP_OP_REPLY,
+            sha_s=computer.mac_address,
+            spa_s=computer.ip_address,
+            tha=arpreq[arp.ARP].sha,
+            tpa=arpreq[arp.ARP].spa)
 
     computer.assert_sendto(response, src_addr)
+
+
+def test_computer_arp_received_not_for_me(computer, src_addr):
+    arpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
+                               type=ethernet.ETH_TYPE_ARP) + \
+        arp.ARP(sha_s="12:34:56:78:90:13",
+                spa_s="192.168.0.1",
+                tha_s="12:34:56:78:90:00",
+                tpa_s=computer.ip_address)
+    computer.datagram_received(arpreq.bin(), src_addr)
+    assert not computer.transport.sendto.called
