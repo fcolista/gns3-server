@@ -23,6 +23,7 @@ from pypacker.layer3 import ip, icmp
 
 from gns3server.compute.vpcs.vpcs_device import Computer
 
+
 @pytest.fixture
 def src_addr():
     return MagicMock()
@@ -30,7 +31,7 @@ def src_addr():
 
 @pytest.fixture(scope="function")
 def computer(src_addr, loop):
-    computer = Computer(loop=loop)
+    computer = Computer(dst=src_addr)
     computer.transport = MagicMock()
     computer.mac_address = "12:34:56:78:90:12"
     computer.ip_address = "192.168.1.2"
@@ -66,10 +67,10 @@ def test_computer_arp_received(computer, src_addr):
     computer.datagram_received(arpreq.bin(), src_addr)
 
     response = ethernet.Ethernet(
-        src_s = computer.mac_address,
+        src_s=computer.mac_address,
         type=ethernet.ETH_TYPE_ARP) + \
         arp.ARP(
-            op = arp.ARP_OP_REPLY,
+            op=arp.ARP_OP_REPLY,
             sha_s=computer.mac_address,
             spa_s=computer.ip_address,
             tha=arpreq[arp.ARP].sha,
@@ -94,11 +95,11 @@ def test_icmp_echo_reply(computer, src_addr):
     icmpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
                                 dst_s=computer.mac_address,
                                 type=ethernet.ETH_TYPE_IP) + \
-            ip.IP(p=ip.IP_PROTO_ICMP,
-                    src_s="192.168.1.1",
-                    dst_s=computer.ip_address) + \
-            icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
-            icmp.ICMP.Echo(id=54, seq=12)
+        ip.IP(p=ip.IP_PROTO_ICMP,
+              src_s="192.168.1.1",
+              dst_s=computer.ip_address) + \
+        icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+        icmp.ICMP.Echo(id=54, seq=12)
     computer.datagram_received(icmpreq.bin(), src_addr)
     icmpreq.reverse_all_address()
     computer.assert_sendto(icmpreq)
@@ -112,11 +113,11 @@ def test_icmp_echo_reply_to_our_ping(computer, src_addr):
     icmpreq = ethernet.Ethernet(src_s="12:34:56:78:90:13",
                                 dst_s=computer.mac_address,
                                 type=ethernet.ETH_TYPE_IP) + \
-            ip.IP(p=ip.IP_PROTO_ICMP,
-                    src_s="192.168.1.1",
-                    dst_s=computer.ip_address) + \
-            icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
-            icmp.ICMP.Echo(id=54, seq=12)
+        ip.IP(p=ip.IP_PROTO_ICMP,
+              src_s="192.168.1.1",
+              dst_s=computer.ip_address) + \
+        icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+        icmp.ICMP.Echo(id=54, seq=12)
     computer.datagram_received(icmpreq.bin(), src_addr)
     assert computer.transport.sendto.called is False
     assert len(computer._icmp_sent_ids) == 0
@@ -138,3 +139,11 @@ def test_ping(computer, async_run):
     assert "ttl=64" in res
     assert "64 bytes" in res
     assert " from 192.168.1.1 " in res
+
+
+@pytest.mark.timeout(10)
+def test_ping_timeout(computer, async_run):
+    computer._arp_cache["192.168.1.1"] = "12:34:56:78:90:13"
+    res = async_run(computer.ping("192.168.1.1", timeout=0.5))
+    assert len(res.strip().split("\n")) == 5
+    assert "192.168.1.1 icmp_seq=1 timeout" in res

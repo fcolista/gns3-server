@@ -62,7 +62,7 @@ class Computer(EmbedShell):
             self._pcap_writer.close()
 
     @asyncio.coroutine
-    def ping(self, host="192.168.1.1"):
+    def ping(self, host, timeout=5):
         """
         Ping remote machine
 
@@ -81,14 +81,14 @@ class Computer(EmbedShell):
                 ip.IP(p=ip.IP_PROTO_ICMP,
                       src_s=self.ip_address,
                       dst_s=host) + \
-                icmp.ICMP(type=icmp.ICMP_ECHOREPLY) + \
+                icmp.ICMP(type=icmp.ICMP_TYPE_ECHO_RESP) + \
                 icmp.ICMP.Echo(id=id, seq=seq, ts=int(time.time()), body_bytes=b"x" * 64)
             self.sendto(icmpreq)
-            done, pending = yield from asyncio.wait([self._icmp_queue.get()], loop=self._loop, timeout=5)
+            done, pending = yield from asyncio.wait([self._icmp_queue.get()], loop=self._loop, timeout=timeout)
             if len(done) == 0:
-                print('FAIL' + host + dst)
+                msg += "{} icmp_seq={} timeout\n".format(host, icmpreq[icmp.ICMP.Echo].seq)
             else:
-                reply = done.pop()
+                reply = done.pop().result()
                 ip_packet = reply[ip.IP]
                 icmp_packet = reply[icmp.ICMP.Echo]
                 msg += "{} bytes from {} icmp_seq={} ttl={} time={} ms\n".format(
@@ -124,6 +124,7 @@ class Computer(EmbedShell):
     def sendto(self, packet):
         if self._pcap_writer:
             self._pcap_writer.write(packet.bin())
+            self._pcap_writer.flush()
         self.transport.sendto(packet.bin(), self.dst_addr)
 
     def connection_made(self, transport):
@@ -134,9 +135,9 @@ class Computer(EmbedShell):
 
     def datagram_received(self, data, src_addr):
         packet = ethernet.Ethernet(data)
-        print(packet)
         if self._pcap_writer:
             self._pcap_writer.write(packet.bin())
+            self._pcap_writer.flush()
         for procotol, layer_handler in self._layer_handlers:
             if packet[procotol]:
                 reply = layer_handler(packet[procotol], packet)
