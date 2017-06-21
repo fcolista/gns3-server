@@ -31,7 +31,7 @@ def src_addr():
 
 @pytest.fixture(scope="function")
 def computer(src_addr, loop):
-    computer = Computer(dst=src_addr)
+    computer = Computer(dst=src_addr, loop=loop)
     computer.transport = MagicMock()
     computer.mac_address = "12:34:56:78:90:12"
     computer.ip_address = "192.168.1.2"
@@ -141,9 +141,15 @@ def test_ping(computer, async_run):
     assert " from 192.168.1.1 " in res
 
 
-@pytest.mark.timeout(10)
+@pytest.mark.timeout(40)
 def test_ping_timeout(computer, async_run):
     computer._arp_cache["192.168.1.1"] = "12:34:56:78:90:13"
     res = async_run(computer.ping("192.168.1.1", timeout=0.5))
     assert len(res.strip().split("\n")) == 5
     assert "192.168.1.1 icmp_seq=1 timeout" in res
+
+
+@pytest.mark.timeout(0)
+def test_ping_unknow_host(computer, async_run):
+    res = async_run(computer.ping("192.168.1.5", timeout=0.5))
+    assert res == "host (192.168.1.5) not reachable\n"

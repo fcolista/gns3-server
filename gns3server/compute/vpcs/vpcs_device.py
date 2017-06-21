@@ -71,6 +71,8 @@ class Computer(EmbedShell):
         msg = ""
         seq = 1
         dst = yield from self._resolve(host)
+        if dst is None:
+            return "host ({}) not reachable\n".format(host)
         self._icmp_sent_ids = set()
         while seq <= 5:
             id = random.getrandbits(16)
@@ -84,11 +86,10 @@ class Computer(EmbedShell):
                 icmp.ICMP(type=icmp.ICMP_TYPE_ECHO_RESP) + \
                 icmp.ICMP.Echo(id=id, seq=seq, ts=int(time.time()), body_bytes=b"x" * 64)
             self.sendto(icmpreq)
-            done, pending = yield from asyncio.wait([self._icmp_queue.get()], loop=self._loop, timeout=timeout)
-            if len(done) == 0:
+            reply = yield from self.wait(self._icmp_queue.get(), 5)
+            if reply is None:
                 msg += "{} icmp_seq={} timeout\n".format(host, icmpreq[icmp.ICMP.Echo].seq)
             else:
-                reply = done.pop().result()
                 ip_packet = reply[ip.IP]
                 icmp_packet = reply[icmp.ICMP.Echo]
                 msg += "{} bytes from {} icmp_seq={} ttl={} time={} ms\n".format(
@@ -102,9 +103,20 @@ class Computer(EmbedShell):
         return msg
 
     @asyncio.coroutine
+    def wait(self, coro, timeout):
+        """
+        Wait for a coro or return None in case of timeout
+        """
+        done, pending = yield from asyncio.wait([coro], loop=self._loop, timeout=timeout)
+        if len(done) == 0:
+            return None
+        return done.pop().result()
+
+    @asyncio.coroutine
     def _resolve(self, host):
         #TODO: Support DNS
-        while True:
+        t = 0
+        while t < 5:
             if host in self._arp_cache:
                 return self._arp_cache[host]
             elif host == self.ip_address:
@@ -120,6 +132,8 @@ class Computer(EmbedShell):
                             op=arp.ARP_OP_REQUEST)
                 self.sendto(arpreq)
                 yield from asyncio.sleep(0.5)
+                t += 1
+        return None
 
     def sendto(self, packet):
         if self._pcap_writer:
