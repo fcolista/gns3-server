@@ -56,6 +56,13 @@ class Computer(EmbedShell):
         ]
 
     @asyncio.coroutine
+    def echo(self, *args):
+        """
+        echo TEXT Display TEXT in output
+        """
+        return ' '.join(args)
+
+    @asyncio.coroutine
     def set(self, option, *args):
         """
         set ARG ...

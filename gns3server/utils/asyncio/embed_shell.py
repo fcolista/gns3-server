@@ -98,6 +98,8 @@ class EmbedShell:
                 break
         if not found:
             res = ('Command not found {}'.format(cmd[0]) + (yield from self.help()))
+        if not res.endswith('\n'):
+            res += '\n'
         return res
 
     @asyncio.coroutine

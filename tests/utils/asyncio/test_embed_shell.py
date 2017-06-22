@@ -53,7 +53,7 @@ def test_embed_shell_execute(async_run):
     reader = asyncio.StreamReader()
     writer = asyncio.StreamReader()
     app = Application(reader, writer)
-    assert async_run(app._parse_command('hello')) == 'world'
+    assert async_run(app._parse_command('hello')) == 'world\n'
 
 
 def test_embed_shell_welcome(async_run, loop):

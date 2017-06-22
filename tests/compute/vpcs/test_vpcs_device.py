@@ -168,3 +168,11 @@ def test_set_pcname(computer, async_run):
     assert res == ""
     assert computer._settings["pcname"] == "TEST"
     assert computer.prompt == "TEST> "
+
+
+def test_echo(computer, async_run):
+    res = async_run(computer.echo())
+    assert res == ""
+
+    res = async_run(computer.echo("hello", "world"))
+    assert res == "hello world"
