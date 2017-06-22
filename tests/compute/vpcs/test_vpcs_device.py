@@ -153,3 +153,18 @@ def test_ping_timeout(computer, async_run):
 def test_ping_unknow_host(computer, async_run):
     res = async_run(computer.ping("192.168.1.5", timeout=0.5))
     assert res == "host (192.168.1.5) not reachable\n"
+
+
+def test_set_invalid(computer, async_run):
+    res = async_run(computer.set("dsfsdfsd"))
+    assert res == "Invalid command."
+
+
+def test_set_pcname(computer, async_run):
+    res = async_run(computer.set("pcname"))
+    assert res == "Incomplete command."
+
+    res = async_run(computer.set("pcname", "TEST"))
+    assert res == ""
+    assert computer._settings["pcname"] == "TEST"
+    assert computer.prompt == "TEST> "

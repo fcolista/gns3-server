@@ -34,9 +34,14 @@ class Computer(EmbedShell):
         self.mac_address = None
         self.dst_addr = dst
         self._arp_cache = {}
+        self._settings = {
+            "pcname": "VPCS"
+        }
+        self.prompt = "VPCS> "
 
         # For debug set it's to None if you want to disable it
-        self._pcap_writer = ppcap.Writer(filename="/tmp/debug.pcap")
+        self._pcap_writer = None
+        #self._pcap_writer = ppcap.Writer(filename="/tmp/debug.pcap")
 
         # ICMP reply are stored to be consume by the ping command
         self._icmp_queue = asyncio.Queue(loop=self._loop)
@@ -51,15 +56,24 @@ class Computer(EmbedShell):
         ]
 
     @asyncio.coroutine
-    def quit(self):
+    def set(self, option, *args):
         """
-        FOR DEBUG
+        set ARG ...
+
+        Set hostname, connection port, ipfrag state, dump options and echo options
+        ARG:
+
+        pcname NAME  Set the hostname of the current VPC to NAME
         """
-        #TODO: REMOVE
-        import sys
-        sys.exit(0)
-        if self._pcap_writer:
-            self._pcap_writer.close()
+
+        if option == "pcname":
+            if len(args) != 1:
+                return "Incomplete command."
+            self._settings["pcname"] = args[0]
+            self.prompt = args[0] + "> "
+            return ""
+        else:
+            return "Invalid command."
 
     @asyncio.coroutine
     def ping(self, host, timeout=5):
@@ -207,7 +221,6 @@ class VpcsDevice:
         shell = Computer(dst=("127.0.0.1", 5556))
         shell.mac_address = "00:50:79:68:90:13"
         shell.ip_address = "192.168.1.2"
-        shell.prompt = "VPCS> "
         self._shell_task = create_stdin_shell(shell)
         self._computer_task = asyncio.Task(loop.create_datagram_endpoint(lambda: shell, local_addr=('127.0.0.1', 5555)))
         return asyncio.gather(self._shell_task, self._computer_task)
