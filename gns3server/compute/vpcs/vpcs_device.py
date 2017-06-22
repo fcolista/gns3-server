@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 import time
 import random
 import asyncio
@@ -28,8 +29,16 @@ from gns3server.utils.asyncio.embed_shell import EmbedShell, create_stdin_shell
 
 class Computer(EmbedShell):
 
-    def __init__(self, *args, dst=None, **kwargs):
+    def __init__(self, *args, dst=None, working_directory=None, **kwargs):
+        """
+        :param dst: Address of the host connected to the network port
+        :param working_directory: In which location we will save and restore startup.vpc
+        """
         super().__init__(*args, **kwargs)
+        if working_directory is None:
+            self._working_directory = os.getcwd()
+        else:
+            self._working_directory = working_directory
         self.ip_address = None
         self.mac_address = None
         self.dst_addr = dst
@@ -54,6 +63,30 @@ class Computer(EmbedShell):
             (arp.ARP, self._handle_arp),
             (icmp.ICMP.Echo, self._handle_icmp_echo)
         ]
+
+    @asyncio.coroutine
+    def run(self):
+        try:
+            with open(os.path.join(self._working_directory, "startup.vpc")) as f:
+                for line in f.readlines():
+                    res = yield from self.parse_command(line.strip())
+                    self.write(res)
+        except OSError:
+            pass
+        yield from super().run()
+
+    @asyncio.coroutine
+    def save(self):
+        """
+        save the configuration to startup.vpc
+        """
+        try:
+            with open(os.path.join(self._working_directory, 'startup.vpc'), 'w+') as f:
+                for k, v in self._settings.items():
+                    f.write('set {} {}\n'.format(k, v))
+            return 'Saving startup configuration to startup.vpc'
+        except OSError as e:
+            return 'Can\'t write startup.vpc: {}'.format(str(e))
 
     @asyncio.coroutine
     def echo(self, *args):
@@ -235,7 +268,7 @@ class VpcsDevice:
 
 if __name__ == '__main__':
     # To test start with python -m gns3server.compute.vpcs.vpcs_device
-    # and vpcs with vpcs -c 5555 -s 5556
+    # and vpcs with vpcs -c 5555 -s 5556 -i 1
     loop = asyncio.get_event_loop()
     loop.run_until_complete(VpcsDevice().run())
     loop.close()

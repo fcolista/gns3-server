@@ -55,4 +55,4 @@ startup.vpcs
 .gns3_shell_history
 
 # Virtualenv
-env
+envstartup.vpc

@@ -71,7 +71,8 @@ class EmbedShell:
         for name, value in inspect.getmembers(self):
             if not inspect.isgeneratorfunction(value):
                 continue
-            if name.startswith('_') or (len(args) and name != args[0]) or name == 'run':
+            if name.startswith('_') or (len(args) and name != args[0]) \
+                    or name in ('run', 'parse_command', 'wait'):
                 continue
             doc = inspect.getdoc(value)
             res += name
@@ -85,7 +86,7 @@ class EmbedShell:
         return res
 
     @asyncio.coroutine
-    def _parse_command(self, text):
+    def parse_command(self, text):
         cmd = text.split(' ')
         found = False
         if cmd[0] == '?':
@@ -97,7 +98,7 @@ class EmbedShell:
                 found = True
                 break
         if not found:
-            res = ('Command not found {}'.format(cmd[0]) + (yield from self.help()))
+            res = ('Command not found {}\n'.format(cmd[0]) + (yield from self.help()))
         if not res.endswith('\n'):
             res += '\n'
         return res
@@ -105,13 +106,20 @@ class EmbedShell:
     @asyncio.coroutine
     def run(self):
         if self._welcome_message:
-            self._writer.feed_data(self._welcome_message.encode())
+            self.write(self._welcome_message)
         while True:
-            self._writer.feed_data(self._prompt.encode())
+            self.write(self._prompt)
             result = yield from self._reader.readline()
             result = result.decode().strip('\n')
-            res = yield from self._parse_command(result)
-            self._writer.feed_data(res.encode())
+            res = yield from self.parse_command(result)
+            self.write(res)
+
+    def write(self, text):
+        """
+        Write to user
+        """
+        if self._writer:
+            self._writer.feed_data(text.encode())
 
 
 def create_telnet_shell(shell, loop=None):

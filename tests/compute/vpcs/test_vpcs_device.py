@@ -15,11 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 import pytest
 import asyncio
 from unittest.mock import MagicMock
 from pypacker.layer12 import arp, ethernet
 from pypacker.layer3 import ip, icmp
+
+from tests.utils import asyncio_patch
 
 from gns3server.compute.vpcs.vpcs_device import Computer
 
@@ -30,8 +33,8 @@ def src_addr():
 
 
 @pytest.fixture(scope="function")
-def computer(src_addr, loop):
-    computer = Computer(dst=src_addr, loop=loop)
+def computer(src_addr, loop, tmpdir):
+    computer = Computer(dst=src_addr, loop=loop, working_directory=str(tmpdir))
     computer.transport = MagicMock()
     computer.mac_address = "12:34:56:78:90:12"
     computer.ip_address = "192.168.1.2"
@@ -176,3 +179,20 @@ def test_echo(computer, async_run):
 
     res = async_run(computer.echo("hello", "world"))
     assert res == "hello world"
+
+
+def test_save(tmpdir, async_run, computer):
+    async_run(computer.set("pcname", "TEST"))
+    assert async_run(computer.save()) == 'Saving startup configuration to startup.vpc'
+    with open(str(tmpdir / "startup.vpc")) as f:
+        content = f.read()
+    assert content == 'set pcname TEST\n'
+
+
+def test_read_startup(tmpdir, computer, async_run):
+    with open(str(tmpdir / 'startup.vpc'), 'w+') as f:
+        f.write('set pcname TEST\n')
+    with asyncio_patch('gns3server.utils.asyncio.embed_shell.EmbedShell.run'):
+        async_run(computer.run())
+    assert computer._settings["pcname"] == "TEST"
+    assert computer.prompt == "TEST> "

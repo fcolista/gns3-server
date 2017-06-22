@@ -34,9 +34,9 @@ def test_embed_shell_help(async_run):
     reader = asyncio.StreamReader()
     writer = asyncio.StreamReader()
     app = Application(reader, writer)
-    assert async_run(app._parse_command('help')) == 'Help:\nhello: The hello world function\nhelp: Show help\n\nhelp command for details about a command\n'
-    assert async_run(app._parse_command('?')) == 'Help:\nhello: The hello world function\nhelp: Show help\n\nhelp command for details about a command\n'
-    assert async_run(app._parse_command('? hello')) == 'hello: The hello world function\n\nThe hello usage\n'
+    assert async_run(app.parse_command('help')) == 'Help:\nhello: The hello world function\nhelp: Show help\n\nhelp command for details about a command\n'
+    assert async_run(app.parse_command('?')) == 'Help:\nhello: The hello world function\nhelp: Show help\n\nhelp command for details about a command\n'
+    assert async_run(app.parse_command('? hello')) == 'hello: The hello world function\n\nThe hello usage\n'
 
 
 def test_embed_shell_execute(async_run):
@@ -53,7 +53,7 @@ def test_embed_shell_execute(async_run):
     reader = asyncio.StreamReader()
     writer = asyncio.StreamReader()
     app = Application(reader, writer)
-    assert async_run(app._parse_command('hello')) == 'world\n'
+    assert async_run(app.parse_command('hello')) == 'world\n'
 
 
 def test_embed_shell_welcome(async_run, loop):
