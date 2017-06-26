@@ -27,7 +27,7 @@ from pypacker import ppcap
 from gns3server.utils.asyncio.embed_shell import EmbedShell, create_stdin_shell
 
 
-class Computer(EmbedShell):
+class VpcsDevice(EmbedShell):
 
     def __init__(self, *args, dst=None, working_directory=None, **kwargs):
         """
@@ -249,26 +249,14 @@ class Computer(EmbedShell):
         return icmpreq
 
 
-class VpcsDevice:
-    """
-    This replace the vpcs binary with a pure python
-    implementation
-    """
-    @asyncio.coroutine
-    def run(self, loop=None):
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        shell = Computer(dst=("127.0.0.1", 5556))
-        shell.mac_address = "00:50:79:68:90:13"
-        shell.ip_address = "192.168.1.2"
-        self._shell_task = create_stdin_shell(shell)
-        self._computer_task = asyncio.Task(loop.create_datagram_endpoint(lambda: shell, local_addr=('127.0.0.1', 5555)))
-        return asyncio.gather(self._shell_task, self._computer_task)
-
-
 if __name__ == '__main__':
     # To test start with python -m gns3server.compute.vpcs.vpcs_device
     # and vpcs with vpcs -c 5555 -s 5556 -i 1
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(VpcsDevice().run())
+    shell = VpcsDevice(dst=("127.0.0.1", 5556))
+    shell.mac_address = "00:50:79:68:90:13"
+    shell.ip_address = "192.168.1.2"
+    shell_task = create_stdin_shell(shell)
+    computer_task = asyncio.Task(loop.create_datagram_endpoint(lambda: shell, local_addr=('127.0.0.1', 5555)))
+    loop.run_until_complete(asyncio.gather(shell_task, computer_task))
     loop.close()

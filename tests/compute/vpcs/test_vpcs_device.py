@@ -24,7 +24,7 @@ from pypacker.layer3 import ip, icmp
 
 from tests.utils import asyncio_patch
 
-from gns3server.compute.vpcs.vpcs_device import Computer
+from gns3server.compute.vpcs.vpcs_device import VpcsDevice
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def src_addr():
 
 @pytest.fixture(scope="function")
 def computer(src_addr, loop, tmpdir):
-    computer = Computer(dst=src_addr, loop=loop, working_directory=str(tmpdir))
+    computer = VpcsDevice(dst=src_addr, loop=loop, working_directory=str(tmpdir))
     computer.transport = MagicMock()
     computer.mac_address = "12:34:56:78:90:12"
     computer.ip_address = "192.168.1.2"
