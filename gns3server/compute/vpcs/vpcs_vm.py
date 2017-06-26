@@ -22,19 +22,12 @@ order to run a VPCS VM.
 
 import os
 import sys
-import socket
-import subprocess
-import signal
 import re
 import asyncio
-import shutil
 
-from gns3server.utils.asyncio import wait_for_process_termination
-from gns3server.utils.asyncio import monitor_process
-from gns3server.utils.asyncio import subprocess_check_output
-from gns3server.utils import parse_version
-
+from ...utils.asyncio.embed_shell import create_telnet_shell
 from .vpcs_error import VPCSError
+from .vpcs_device import VpcsDevice
 from ..adapters.ethernet_adapter import EthernetAdapter
 from ..nios.nio_udp import NIOUDP
 from ..nios.nio_tap import NIOTAP
@@ -61,12 +54,10 @@ class VPCSVM(BaseNode):
 
     def __init__(self, name, node_id, project, manager, console=None, startup_script=None):
 
-        super().__init__(name, node_id, project, manager, console=console, wrap_console=True)
-        self._process = None
-        self._vpcs_stdout_file = ""
-        self._vpcs_version = None
+        super().__init__(name, node_id, project, manager, console=console)
         self._started = False
         self._local_udp_tunnel = None
+        self._device_shell = None
 
         # VPCS settings
         if startup_script is not None and not self.script_file:  # We disallow override at startup
@@ -93,31 +84,16 @@ class VPCSVM(BaseNode):
 
         yield from self._stop_ubridge()
 
-        if self.is_running():
-            self._terminate_process()
-
         return True
 
     @asyncio.coroutine
     def _check_requirements(self):
         """
-        Check if VPCS is available with the correct version.
+        Check if ubridge is available
         """
-
-        path = self._vpcs_path()
-        if not path:
-            raise VPCSError("No path to a VPCS executable has been set")
 
         # This raise an error if ubridge is not available
         self.ubridge_path
-
-        if not os.path.isfile(path):
-            raise VPCSError("VPCS program '{}' is not accessible".format(path))
-
-        if not os.access(path, os.X_OK):
-            raise VPCSError("VPCS program '{}' is not executable".format(path))
-
-        yield from self._check_vpcs_version()
 
     def __json__(self):
 
@@ -143,20 +119,6 @@ class VPCSVM(BaseNode):
             return 'startup.vpc'
         else:
             return None
-
-    def _vpcs_path(self):
-        """
-        Returns the VPCS executable path.
-
-        :returns: path to VPCS
-        """
-
-        search_path = self._manager.config.get_section_config("VPCS").get("vpcs_path", "vpcs")
-        path = shutil.which(search_path)
-        # shutil.which return None if the path doesn't exists
-        if not path:
-            return search_path
-        return path
 
     @BaseNode.name.setter
     def name(self, new_name):
@@ -211,24 +173,6 @@ class VPCSVM(BaseNode):
             raise VPCSError('Cannot write the startup script file "{}": {}'.format(startup_script_path, e))
 
     @asyncio.coroutine
-    def _check_vpcs_version(self):
-        """
-        Checks if the VPCS executable version is >= 0.8b or == 0.6.1.
-        """
-        try:
-            output = yield from subprocess_check_output(self._vpcs_path(), "-v", cwd=self.working_dir)
-            match = re.search("Welcome to Virtual PC Simulator, version ([0-9a-z\.]+)", output)
-            if match:
-                version = match.group(1)
-                self._vpcs_version = parse_version(version)
-                if self._vpcs_version < parse_version("0.6.1"):
-                    raise VPCSError("VPCS executable version must be >= 0.6.1 but not a 0.8")
-            else:
-                raise VPCSError("Could not determine the VPCS version for {}".format(self._vpcs_path()))
-        except (OSError, subprocess.SubprocessError) as e:
-            raise VPCSError("Error while looking for the VPCS version: {}".format(e))
-
-    @asyncio.coroutine
     def start(self):
         """
         Starts the VPCS process.
@@ -237,54 +181,28 @@ class VPCSVM(BaseNode):
         yield from self._check_requirements()
         if not self.is_running():
             nio = self._ethernet_adapter.get_nio(0)
-            if not self.use_ubridge and not nio:
-                raise VPCSError("This VPCS instance must be connected in order to start")
+            if not self._local_udp_tunnel:
+                self._local_udp_tunnel = self._create_local_udp_tunnel()
+            lnio = self._local_udp_tunnel[0]
+            self._device = VpcsDevice(dst=(lnio.rhost, lnio.rport),
+                                      working_directory=self.working_dir)
 
-            command = self._build_command()
-            try:
-                log.info("Starting VPCS: {}".format(command))
-                self._vpcs_stdout_file = os.path.join(self.working_dir, "vpcs.log")
-                log.info("Logging to {}".format(self._vpcs_stdout_file))
-                flags = 0
-                if sys.platform.startswith("win32"):
-                    flags = subprocess.CREATE_NEW_PROCESS_GROUP
-                with open(self._vpcs_stdout_file, "w", encoding="utf-8") as fd:
-                    self.command_line = ' '.join(command)
-                    self._process = yield from asyncio.create_subprocess_exec(*command,
-                                                                              stdout=fd,
-                                                                              stderr=subprocess.STDOUT,
-                                                                              cwd=self.working_dir,
-                                                                              creationflags=flags)
-                    monitor_process(self._process, self._termination_callback)
+            # TODO: Replace that by proper mac management
+            self._device.mac_address = "00:50:79:68:90:1" + str(self._manager.get_mac_id(self.id))
+            self._device.ip_address = "192.168.1." + str(self._manager.get_mac_id(self.id) + 1)
 
-                if self.use_ubridge:
-                    yield from self._start_ubridge()
-                    if nio:
-                        yield from self._add_ubridge_udp_connection("VPCS-{}".format(self._id), self._local_udp_tunnel[1], nio)
+            self._device_shell = create_telnet_shell(self._device)
+            self._device_shell_server = yield from asyncio.start_server(self._device_shell.run, "0.0.0.0", self.console)
 
-                yield from self.start_wrap_console()
+            self._device_transport, _ = yield from asyncio.get_event_loop().create_datagram_endpoint(lambda: self._device, local_addr=("0.0.0.0", lnio.lport))
 
-                log.info("VPCS instance {} started PID={}".format(self.name, self._process.pid))
-                self._started = True
-                self.status = "started"
-            except (OSError, subprocess.SubprocessError) as e:
-                vpcs_stdout = self.read_vpcs_stdout()
-                log.error("Could not start VPCS {}: {}\n{}".format(self._vpcs_path(), e, vpcs_stdout))
-                raise VPCSError("Could not start VPCS {}: {}\n{}".format(self._vpcs_path(), e, vpcs_stdout))
+            yield from self._start_ubridge()
+            if nio:
+                yield from self._add_ubridge_udp_connection("VPCS-{}".format(self._id), self._local_udp_tunnel[1], nio)
 
-    def _termination_callback(self, returncode):
-        """
-        Called when the process has stopped.
-
-        :param returncode: Process returncode
-        """
-        if self._started:
-            log.info("VPCS process has stopped, return code: %d", returncode)
-            self._started = False
-            self.status = "stopped"
-            self._process = None
-            if returncode != 0:
-                self.project.emit("log.error", {"message": "VPCS process has stopped, return code: {}\n{}".format(returncode, self.read_vpcs_stdout())})
+            log.info("VPCS instance {} started".format(self.name))
+            self._started = True
+            self.status = "started"
 
     @asyncio.coroutine
     def stop(self):
@@ -293,21 +211,10 @@ class VPCSVM(BaseNode):
         """
 
         yield from self._stop_ubridge()
-        if self.is_running():
-            self._terminate_process()
-            if self._process.returncode is None:
-                try:
-                    yield from wait_for_process_termination(self._process, timeout=3)
-                except asyncio.TimeoutError:
-                    if self._process.returncode is None:
-                        try:
-                            self._process.kill()
-                        except OSError as e:
-                            log.error("Cannot stop the VPCS process: {}".format(e))
-                        if self._process.returncode is None:
-                            log.warn('VPCS VM "{}" with PID={} is still running'.format(self._name, self._process.pid))
-
-        self._process = None
+        if self._device_shell:
+            self._device_shell_server.close()
+            self._device_transport.close()
+            self._device_shell = None
         self._started = False
         yield from super().stop()
 
@@ -320,46 +227,13 @@ class VPCSVM(BaseNode):
         yield from self.stop()
         yield from self.start()
 
-    def _terminate_process(self):
-        """
-        Terminate the process if running
-        """
-
-        log.info("Stopping VPCS instance {} PID={}".format(self.name, self._process.pid))
-        if sys.platform.startswith("win32"):
-            self._process.send_signal(signal.CTRL_BREAK_EVENT)
-        else:
-            try:
-                self._process.terminate()
-            # Sometime the process may already be dead when we garbage collect
-            except ProcessLookupError:
-                pass
-
-    def read_vpcs_stdout(self):
-        """
-        Reads the standard output of the VPCS process.
-        Only use when the process has been stopped or has crashed.
-        """
-
-        output = ""
-        if self._vpcs_stdout_file:
-            try:
-                with open(self._vpcs_stdout_file, "rb") as file:
-                    output = file.read().decode("utf-8", errors="replace")
-            except OSError as e:
-                log.warn("Could not read {}: {}".format(self._vpcs_stdout_file, e))
-        return output
-
     def is_running(self):
         """
         Checks if the VPCS process is running
 
         :returns: True or False
         """
-
-        if self._process and self._process.returncode is None:
-            return True
-        return False
+        return self._started
 
     @asyncio.coroutine
     def port_add_nio_binding(self, port_number, nio):
@@ -429,10 +303,6 @@ class VPCSVM(BaseNode):
         if not self._ethernet_adapter.port_exists(port_number):
             raise VPCSError("Port {port_number} doesn't exist in adapter {adapter}".format(adapter=self._ethernet_adapter,
                                                                                            port_number=port_number))
-
-        if not self.use_ubridge:
-            raise VPCSError("uBridge must be enabled in order to start packet capture")
-
         nio = self._ethernet_adapter.get_nio(0)
 
         if not nio:
@@ -476,80 +346,6 @@ class VPCSVM(BaseNode):
         log.info("VPCS '{name}' [{id}]: stopping packet capture on port {port_number}".format(name=self.name,
                                                                                               id=self.id,
                                                                                               port_number=port_number))
-
-    def _build_command(self):
-        """
-        Command to start the VPCS process.
-        (to be passed to subprocess.Popen())
-
-        VPCS command line:
-        usage: vpcs [options] [scriptfile]
-        Option:
-            -h         print this help then exit
-            -v         print version information then exit
-
-            -i num     number of vpc instances to start (default is 9)
-            -p port    run as a daemon listening on the tcp 'port'
-            -m num     start byte of ether address, default from 0
-            -r file    load and execute script file
-                       compatible with older versions, DEPRECATED.
-
-            -e         tap mode, using /dev/tapx by default (linux only)
-            -u         udp mode, default
-
-        udp mode options:
-            -s port    local udp base port, default from 20000
-            -c port    remote udp base port (dynamips udp port), default from 30000
-            -t ip      remote host IP, default 127.0.0.1
-
-        tap mode options:
-            -d vm  device name, works only when -i is set to 1
-
-        hypervisor mode option:
-            -H port    run as the hypervisor listening on the tcp 'port'
-
-          If no 'scriptfile' specified, vpcs will read and execute the file named
-          'startup.vpc' if it exsits in the current directory.
-
-        """
-
-        command = [self._vpcs_path()]
-        command.extend(["-p", str(self._internal_console_port)])  # listen to console port
-        command.extend(["-m", str(self._manager.get_mac_id(self.id))])   # the unique ID is used to set the MAC address offset
-        command.extend(["-i", "1"])  # option to start only one VPC instance
-        command.extend(["-F"])  # option to avoid the daemonization of VPCS
-        if self._vpcs_version >= parse_version("0.8b"):
-            command.extend(["-R"])  # disable the relay feature of VPCS (starting with VPCS 0.8)
-        else:
-            log.warn("The VPCS relay feature could not be disabled because the VPCS version is below 0.8b")
-
-        if self.use_ubridge:
-            # use the local UDP tunnel to uBridge instead
-            if not self._local_udp_tunnel:
-                self._local_udp_tunnel = self._create_local_udp_tunnel()
-            nio = self._local_udp_tunnel[0]
-        else:
-            nio = self._ethernet_adapter.get_nio(0)
-        if nio:
-
-            if isinstance(nio, NIOUDP):
-                # UDP tunnel
-                command.extend(["-s", str(nio.lport)])  # source UDP port
-                command.extend(["-c", str(nio.rport)])  # destination UDP port
-                try:
-                    command.extend(["-t", socket.gethostbyname(nio.rhost)])  # destination host, we need to resolve the hostname because VPCS doesn't support it
-                except socket.gaierror as e:
-                    raise VPCSError("Can't resolve hostname {}".format(nio.rhost))
-
-            elif isinstance(nio, NIOTAP):
-                # FIXME: remove old code
-                # TAP interface
-                command.extend(["-e"])
-                command.extend(["-d", nio.tap_device])
-
-        if self.script_file:
-            command.extend([os.path.basename(self.script_file)])
-        return command
 
     @property
     def script_file(self):

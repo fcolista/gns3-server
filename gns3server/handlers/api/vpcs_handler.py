@@ -200,9 +200,9 @@ class VPCSHandler:
         vpcs_manager = VPCS.instance()
         vm = vpcs_manager.get_vm(request.match_info["vm_id"], project_id=request.match_info["project_id"])
         nio_type = request.json["type"]
-        if nio_type not in ("nio_udp", "nio_tap"):
+        if nio_type not in ("nio_udp"):
             raise HTTPConflict(text="NIO of type {} is not supported".format(nio_type))
-        nio = vpcs_manager.create_nio(vm.vpcs_path(), request.json)
+        nio = vpcs_manager.create_nio(None, request.json)
         vm.port_add_nio_binding(int(request.match_info["port_number"]), nio)
         response.set_status(201)
         response.json(nio)
