@@ -586,6 +586,29 @@ class BaseNode:
                                                                                              pcap_file=destination_nio.pcap_output_file))
 
         yield from self._ubridge_send('bridge start {name}'.format(name=bridge_name))
+        yield from self._ubridge_apply_filters(bridge_name, destination_nio.filters)
+
+    @asyncio.coroutine
+    def _update_ubridge_udp_connection(self, bridge_name, source_nio, destination_nio):
+        yield from self._ubridge_apply_filters(bridge_name, destination_nio.filters)
+
+    @asyncio.coroutine
+    def _ubridge_apply_filters(self, bridge_name, filters):
+        """
+        Apply filter like rate limiting
+
+        :param bridge_name: bridge name in uBridge
+        :param filters: Array of filter dictionnary
+        """
+        yield from self._ubridge_send('bridge reset_packet_filters ' + bridge_name)
+        i = 0
+        for filter in filters:
+            yield from self._ubridge_send("bridge add_packet_filter {bridge_name} {filter_name} {filter_type} {filter_value}".format(
+                bridge_name=bridge_name,
+                filter_name="filter" + str(i),
+                filter_type=filter["type"],
+                filter_value=filter["value"]))
+            i += 1
 
     @asyncio.coroutine
     def _add_ubridge_ethernet_connection(self, bridge_name, ethernet_interface, block_host_traffic=True):
