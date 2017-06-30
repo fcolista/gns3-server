@@ -58,7 +58,10 @@ class Link:
         """
         Modify the filters list
         """
-        self._filters = filters
+        if filters != self.filters:
+            self._filters = filters
+            if self._created:
+                yield from self.update()
 
     @property
     def created(self):
@@ -140,6 +143,13 @@ class Link:
         Create the link
         """
 
+        raise NotImplementedError
+
+    @asyncio.coroutine
+    def update(self):
+        """
+        Update a link
+        """
         raise NotImplementedError
 
     @asyncio.coroutine

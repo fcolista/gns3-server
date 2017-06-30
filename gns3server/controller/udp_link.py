@@ -67,7 +67,8 @@ class UDPLink(Link):
             "lport": self._node1_port,
             "rhost": node2_host,
             "rport": self._node2_port,
-            "type": "nio_udp"
+            "type": "nio_udp",
+            "filters": self._filters
         })
         yield from node1.post("/adapters/{adapter_number}/ports/{port_number}/nio".format(adapter_number=adapter_number1, port_number=port_number1), data=self._link_data[0], timeout=120)
 
@@ -75,7 +76,8 @@ class UDPLink(Link):
             "lport": self._node2_port,
             "rhost": node1_host,
             "rport": self._node1_port,
-            "type": "nio_udp"
+            "type": "nio_udp",
+            "filters": []
         })
         try:
             yield from node2.post("/adapters/{adapter_number}/ports/{port_number}/nio".format(adapter_number=adapter_number2, port_number=port_number2), data=self._link_data[1], timeout=120)
@@ -84,6 +86,16 @@ class UDPLink(Link):
             yield from node1.delete("/adapters/{adapter_number}/ports/{port_number}/nio".format(adapter_number=adapter_number1, port_number=port_number1), timeout=120)
             raise e
         self._created = True
+
+    @asyncio.coroutine
+    def update(self):
+        if len(self._link_data) == 0:
+            return
+        node1 = self._nodes[0]["node"]
+        adapter_number1 = self._nodes[0]["adapter_number"]
+        port_number1 = self._nodes[0]["port_number"]
+        self._link_data[0]["filters"] = self._filters
+        yield from node1.put("/adapters/{adapter_number}/ports/{port_number}/nio".format(adapter_number=adapter_number1, port_number=port_number1), data=self._link_data[0], timeout=120)
 
     @asyncio.coroutine
     def delete(self):

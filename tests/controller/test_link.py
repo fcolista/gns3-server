@@ -230,6 +230,7 @@ def test_json(async_run, project, compute, link):
                 }
             }
         ],
+        "filters": [],
         "link_type": "ethernet",
         "capturing": False,
         "capture_file_name": None,
@@ -262,7 +263,8 @@ def test_json(async_run, project, compute, link):
                     'style': 'font-size: 10; font-style: Verdana'
                 }
             }
-        ]
+        ],
+        "filters": []
     }
 
 
@@ -348,3 +350,26 @@ def test_delete(async_run, project, compute):
 
     async_run(link.delete())
     assert link not in node2.link
+
+
+def test_update_filters(async_run, project, compute):
+    node1 = Node(project, compute, "node1", node_type="qemu")
+    node1._ports = [EthernetPort("E0", 0, 0, 4)]
+
+    link = Link(project)
+    link.create = AsyncioMagicMock()
+    link._project.controller.notification.emit = MagicMock()
+    project.dump = AsyncioMagicMock()
+    async_run(link.add_node(node1, 0, 4))
+
+    node2 = Node(project, compute, "node2", node_type="qemu")
+    node2._ports = [EthernetPort("E0", 0, 0, 4)]
+    async_run(link.add_node(node2, 0, 4))
+
+    link.update = AsyncioMagicMock()
+    assert link._created
+    async_run(link.update_filters([{
+        "type": "latency",
+        "value": 10
+    }]))
+    assert link.update.called
