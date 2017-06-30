@@ -44,6 +44,21 @@ class Link:
         self._streaming_pcap = None
         self._created = False
         self._link_type = "ethernet"
+        self._filters = []
+
+    @property
+    def filters(self):
+        """
+        Get an array of filters
+        """
+        return self._filters
+
+    @asyncio.coroutine
+    def update_filters(self, filters):
+        """
+        Modify the filters list
+        """
+        self._filters = filters
 
     @property
     def created(self):
@@ -253,7 +268,8 @@ class Link:
         if topology_dump:
             return {
                 "nodes": res,
-                "link_id": self._id
+                "link_id": self._id,
+                "filters": self._filters
             }
         return {
             "nodes": res,
@@ -262,5 +278,6 @@ class Link:
             "capturing": self._capturing,
             "capture_file_name": self._capture_file_name,
             "capture_file_path": self.capture_file_path,
-            "link_type": self._link_type
+            "link_type": self._link_type,
+            "filters": self._filters
         }

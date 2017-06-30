@@ -71,6 +71,7 @@ class LinkHandler:
         except aiohttp.web_exceptions.HTTPException as e:
             yield from project.delete_link(link.id)
             raise e
+        yield from link.update_filters(request.json.get("filters", []))
         response.set_status(201)
         response.json(link)
 
@@ -92,6 +93,7 @@ class LinkHandler:
         project = yield from Controller.instance().get_loaded_project(request.match_info["project_id"])
         link = project.get_link(request.match_info["link_id"])
         yield from link.update_nodes(request.json["nodes"])
+        yield from link.update_filters(request.json.get("filters", []))
         response.set_status(201)
         response.json(link)
 

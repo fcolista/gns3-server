@@ -64,6 +64,23 @@ LINK_OBJECT_SCHEMA = {
                 "additionalProperties": False
             }
         },
+        "filters": {
+            "description": "Packet filters. This allow to simulate latency and errors",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "description": "Filter type",
+                        "type": "string"
+                    },
+                    "value": {
+                        "description": "Filter value",
+                        "type": "integer"
+                    }
+                }
+            }
+        },
         "capturing": {
             "description": "Read only property. True if a capture running on the link",
             "type": "boolean"
