@@ -245,6 +245,8 @@ class VPCSHandler:
         vpcs_manager = VPCS.instance()
         vm = vpcs_manager.get_node(request.match_info["node_id"], project_id=request.match_info["project_id"])
         nio = vm.ethernet_adapter.get_nio(int(request.match_info["port_number"]))
+        if "filters" in request.json and nio:
+            nio.filters = request.json["filters"]
         yield from vm.port_update_nio_binding(int(request.match_info["port_number"]), nio)
         response.set_status(201)
         response.json(request.json)

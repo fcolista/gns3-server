@@ -86,7 +86,6 @@ LINK_OBJECT_SCHEMA = {
             "enum": ["ethernet", "serial"]
         }
     },
-    "required": ["nodes"],
     "additionalProperties": False
 }
 
